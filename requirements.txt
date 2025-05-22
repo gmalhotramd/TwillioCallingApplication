@@ -1,0 +1,6 @@
+fastapi 
+uvicorn 
+python-dotenv 
+websockets==13.1
+twilio
+python-multipart
