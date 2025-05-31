@@ -5,34 +5,37 @@ from twilio.twiml.voice_response import VoiceResponse, Connect
 from twilio.rest import Client
 from dotenv import load_dotenv
 from urllib.parse import parse_qs
+from datetime import datetime
+
 print(f"🔍 Websockets version in use: {websockets.__version__}")
 
-# ─── Load configuration ────────────────────────────────────────────────────────
+# Load configuration
 load_dotenv()
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 TWILIO_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 PORT = int(os.getenv('PORT', 5050))
+
 if not OPENAI_API_KEY or not TWILIO_SID or not TWILIO_TOKEN:
     raise ValueError("Missing OPENAI_API_KEY or Twilio creds in .env")
 
 twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
-call_sid_cache = {}  # ✅ In-memory cache for fallback
+call_sid_cache = {}
 
 SYSTEM_MESSAGE = (
-    "You are Eve AI, the Concierge for Absolute Health Care.  \n"
-    "→ Always start with exactly: “Hello, I’m Eve AI from Absolute Health Care—how can I help you today?”  \n"
+    "You are Eve AI, the Concierge for Absolute Health Care.\n"
+    "→ Always start with exactly: \u201cHello, I’m Eve AI from Absolute Health Care—how can I help you today?\u201d\n"
     "\n"
     "**About Absolute Health Care:**\n"
-    "- We provide comprehensive medical support and wellness services.  \n"
-    "- Office hours: Monday–Friday, 8 AM to 4 PM.  \n"
-    "- For medical emergencies, please hang up and dial 911 immediately.  \n"
+    "- We provide comprehensive medical support and wellness services.\n"
+    "- Office hours: Monday–Friday, 8 AM to 4 PM.\n"
+    "- For medical emergencies, please hang up and dial 911 immediately.\n"
     "\n"
     "**If asked anything outside your knowledge or scope:**\n"
-    "- Respond: “I’m not sure about that at the moment; let me transfer you to a human specialist.”  \n"
+    "- Respond: \u201cI’m not sure about that at the moment; let me transfer you to a human specialist.\u201d\n"
     "\n"
     "**Tone & style:**\n"
-    "- Keep all responses clear, concise, and professional.  \n"
+    "- Keep all responses clear, concise, and professional.\n"
 )
 
 VOICE = 'alloy'
@@ -45,42 +48,31 @@ LOG_EVENT_TYPES = [
 
 app = FastAPI()
 
-# ─── Healthcheck ───────────────────────────────────────────────────────────────
 @app.get("/", response_class=JSONResponse)
 async def index_page():
     return {"message": "AI Concierge is running"}
 
-# ─── Incoming Call: Capture CallSid & start Media Stream ─────────────────────
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
     form = await request.form()
     call_sid = form.get("CallSid")
-    call_sid_cache["last"] = call_sid  # ✅ Cache it
+    call_sid_cache["last"] = call_sid
     print(f"📦 Cached call_sid: {call_sid}")
 
     response = VoiceResponse()
     response.say("Connecting you now to Eve AI from Absolute Health Care.")
     connect = Connect()
-    connect.stream(url="wss://twilliocallingapplication.onrender.com/media-stream?callSid=" + call_sid)
+    connect.stream(url=f"wss://twilliocallingapplication.onrender.com/media-stream?callSid={call_sid}")
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
 
-# ─── WebSocket: proxy audio & handle hang-up ──────────────────────────────────
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
     await websocket.accept()
     query_string = websocket.scope["query_string"].decode()
     query = parse_qs(query_string)
-    call_sid = query.get("callSid", [None])[0]
-
-    if not call_sid:
-        call_sid = call_sid_cache.get("last")
-        print("⚠️ callSid missing in query, using cached:", call_sid)
-
-    print(f"📞 WebSocket raw query string: {query_string}")
-    print(f"📞 Parsed query: {query}")
-    print(f"✅ Final call_sid used: {call_sid if call_sid else '[MISSING]'}")
-
+    call_sid = query.get("callSid", [None])[0] or call_sid_cache.get("last")
+    print(f"📞 Final call_sid used: {call_sid if call_sid else '[MISSING]'}")
     stream_sid = None
     full_text = ""
 
@@ -96,7 +88,6 @@ async def handle_media_stream(websocket: WebSocket):
 
         async def recv_twilio():
             nonlocal stream_sid
-            from datetime import datetime
             last_audio_time = datetime.utcnow()
             prompt_sent = False
 
@@ -104,9 +95,8 @@ async def handle_media_stream(websocket: WebSocket):
                 nonlocal prompt_sent
                 while not prompt_sent:
                     await asyncio.sleep(1)
-                    now = datetime.utcnow()
-                    if (now - last_audio_time).total_seconds() > 3:
-                        print("⏰ No speech detected for 3 seconds. Sending prompt...")
+                    if (datetime.utcnow() - last_audio_time).total_seconds() > 3:
+                        print("⏰ No speech detected. Sending prompt...")
                         await openai_ws.send(json.dumps({
                             "type": "input_text",
                             "text": "I cannot hear you. Did you say something? How can I help you?"
@@ -130,29 +120,20 @@ async def handle_media_stream(websocket: WebSocket):
 
         async def send_twilio():
             nonlocal full_text
-
             GOODBYE_TRIGGERS = [
-                "thank you bye have a great day",
-                "thank you and goodbye",
-                "goodbye have a nice day",
-                "thank you have a great day",
-                "have a great day",
-                "talk to you later",
-                "take care",
-                "goodbye"
+                "thank you bye have a great day", "thank you and goodbye",
+                "goodbye have a nice day", "thank you have a great day",
+                "have a great day", "talk to you later", "take care", "goodbye"
             ]
 
             def is_goodbye_trigger(text):
-                normalized = text.lower().strip()
-                return any(trigger in normalized for trigger in GOODBYE_TRIGGERS)
+                return any(trigger in text.lower().strip() for trigger in GOODBYE_TRIGGERS)
 
             current_response = ""
             goodbye_detected = False
 
             while True:
-                raw = await openai_ws.recv()
-                data = json.loads(raw)
-
+                data = json.loads(await openai_ws.recv())
                 if data.get("type") == "response.text.delta":
                     delta = data.get("delta", "")
                     print(f"🤖 AI (delta): {delta.strip()}")
@@ -162,26 +143,19 @@ async def handle_media_stream(websocket: WebSocket):
                 elif data.get("type") == "response.done":
                     print("📘 Assistant finished speaking.")
                     if goodbye_detected:
-                        print("🛑 Goodbye was flagged earlier. Hanging up now.")
+                        print("🚩 Hanging up due to goodbye.")
                         if call_sid:
                             try:
                                 call = twilio_client.calls(call_sid).fetch()
-                                print(f"📞 Twilio Call Status: {call.status}")
                                 if call.status == "in-progress":
                                     twilio_client.calls(call_sid).update(
                                         twiml='<Response><Pause length="4"/><Hangup/></Response>'
                                     )
-                                    print("✅ Sent <Pause><Hangup/> TwiML.")
                                 else:
-                                    print(f"⚠️ Call ended. Status: {call.status}. Sending fallback hangup.")
                                     twilio_client.calls(call_sid).update(status="completed")
-                                    print("✅ Fallback: Call marked as completed.")
                             except Exception as e:
-                                print(f"❌ Exception while hanging up: {e}")
-                        else:
-                            print("❌ No call_sid found — skipping hang-up.")
+                                print(f"❌ Hangup error: {e}")
                         return
-
                     current_response = ""
 
                 elif data.get("type") == "response.audio.delta" and data.get("delta"):
@@ -194,7 +168,7 @@ async def handle_media_stream(websocket: WebSocket):
                             "media": {"payload": payload}
                         })
                     except Exception as e:
-                        print(f"❌ Error sending audio to Twilio: {e}")
+                        print(f"❌ Audio send error: {e}")
 
                 if data.get("type") == "response.done":
                     try:
@@ -202,12 +176,12 @@ async def handle_media_stream(websocket: WebSocket):
                         for item in content_items:
                             if item.get("type") == "audio" and "transcript" in item:
                                 transcript = item["transcript"].lower()
-                                print(f"📝 Final transcript: {transcript}")
+                                print(f"📝 Transcript: {transcript}")
                                 if is_goodbye_trigger(transcript):
-                                    print("🚩 Goodbye intent detected. Will hang up after assistant finishes speaking.")
+                                    print("🚩 Goodbye detected. Awaiting response completion.")
                                     goodbye_detected = True
                     except Exception as e:
-                        print(f"⚠️ Error parsing transcript from response.done: {e}")
+                        print(f"⚠️ Transcript parse error: {e}")
 
                 if data.get("type") in LOG_EVENT_TYPES:
                     print("📡 Event:", data["type"])
@@ -215,7 +189,21 @@ async def handle_media_stream(websocket: WebSocket):
         await asyncio.gather(recv_twilio(), send_twilio())
 
 
-# ─── Server entrypoint ────────────────────────────────────────────────────────
+async def send_session_update(openai_ws):
+    session_update = {
+        "type": "session.update",
+        "session": {
+            "turn_detection": {"type": "server_vad"},
+            "input_audio_format": "g711_ulaw",
+            "output_audio_format": "g711_ulaw",
+            "voice": VOICE,
+            "instructions": SYSTEM_MESSAGE,
+            "modalities": ["audio", "text"],
+            "temperature": 0.8
+        }
+    }
+    await openai_ws.send(json.dumps(session_update))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=PORT)
