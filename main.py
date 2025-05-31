@@ -33,7 +33,6 @@ SYSTEM_MESSAGE = (
     "\n"
     "**Tone & style:**\n"
     "- Keep all responses clear, concise, and professional.  \n"
-    "- End each answer with “How else may I assist you today?”"
 )
 
 VOICE = 'alloy'
@@ -94,18 +93,49 @@ async def handle_media_stream(websocket: WebSocket):
     ) as openai_ws:
 
         await send_session_update(openai_ws)
+        
 
         async def recv_twilio():
             nonlocal stream_sid
+            from datetime import datetime
+            last_audio_time = datetime.utcnow()
+            prompt_sent = False
+
+            # ⏰ Background task: Watch for 3 seconds of silence
+            async def silence_watchdog():
+                nonlocal prompt_sent
+                while not prompt_sent:
+                    await asyncio.sleep(1)
+                    now = datetime.utcnow()
+                    if (now - last_audio_time).total_seconds() > 3:
+                        print("⏰ No speech detected for 3 seconds. Sending prompt...")
+                        await openai_ws.send(json.dumps({
+                            "type": "input_text",
+                            "text": "I cannot hear you. Did you say something? How can I help you?"
+                        }))
+                        prompt_sent = True
+
+            # 🚀 Start silence checker
+            asyncio.create_task(silence_watchdog())
+
+            # 🎧 Main loop: handle Twilio media events
             async for msg in websocket.iter_text():
                 data = json.loads(msg)
+
                 if data.get("event") == "start":
                     stream_sid = data['start']['streamSid']
+
                 elif data.get("event") == "media":
+                    last_audio_time = datetime.utcnow()  # 🔁 Reset timer on media
                     await openai_ws.send(json.dumps({
                         "type": "input_audio_buffer.append",
                         "audio": data['media']['payload']
                     }))
+
+                elif data.get("event") == "input_audio_buffer.speech_started":
+                    last_audio_time = datetime.utcnow()  # 🔁 Reset timer on speech start
+
+
 
         async def send_twilio():
             nonlocal full_text
