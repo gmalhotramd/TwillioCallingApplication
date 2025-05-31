@@ -137,7 +137,7 @@ async def handle_media_stream(websocket: WebSocket):
 
 
 
-        async def send_twilio():
+         async def send_twilio():
             nonlocal full_text
 
             GOODBYE_TRIGGERS = [
@@ -156,11 +156,11 @@ async def handle_media_stream(websocket: WebSocket):
                 return any(trigger in normalized for trigger in GOODBYE_TRIGGERS)
 
             current_response = ""
+            goodbye_detected = False  # 🚩 New flag to delay hang-up
 
             while True:
                 raw = await openai_ws.recv()
                 data = json.loads(raw)
-                # print("🔍 RAW EVENT:", json.dumps(data, indent=2))
 
                 if data.get("type") == "response.text.delta":
                     delta = data.get("delta", "")
@@ -170,35 +170,27 @@ async def handle_media_stream(websocket: WebSocket):
 
                 elif data.get("type") == "response.done":
                     print("📘 Assistant finished speaking.")
-                    try:
-                        content_items = data.get("response", {}).get("output", [])[0].get("content", [])
-                        for item in content_items:
-                            if item.get("type") == "audio" and "transcript" in item:
-                                transcript = item["transcript"].lower()
-                                print(f"📝 Final transcript: {transcript}")
-                                if is_goodbye_trigger(transcript):
-                                    print("🛑 Goodbye detected from transcript. Triggering hang-up...")
-
-                                    if call_sid:
-                                        try:
-                                            call = twilio_client.calls(call_sid).fetch()
-                                            print(f"📞 Twilio Call Status: {call.status}")
-                                            if call.status == "in-progress":
-                                                twilio_client.calls(call_sid).update(
-                                                    twiml='<Response><Pause length="4"/><Hangup/></Response>'
-                                                )
-                                                print("✅ Sent <Pause><Hangup/> TwiML.")
-                                            else:
-                                                print(f"⚠️ Call ended. Status: {call.status}. Sending fallback hangup.")
-                                                twilio_client.calls(call_sid).update(status="completed")
-                                                print("✅ Fallback: Call marked as completed.")
-                                        except Exception as e:
-                                            print(f"❌ Exception while hanging up: {e}")
-                                    else:
-                                        print("❌ No call_sid found — skipping hang-up.")
-                                    return
-                    except Exception as e:
-                        print(f"⚠️ Error parsing transcript from response.done: {e}")
+                    
+                    if goodbye_detected:
+                        print("🛑 Goodbye was flagged earlier. Hanging up now.")
+                        if call_sid:
+                            try:
+                                call = twilio_client.calls(call_sid).fetch()
+                                print(f"📞 Twilio Call Status: {call.status}")
+                                if call.status == "in-progress":
+                                    twilio_client.calls(call_sid).update(
+                                        twiml='<Response><Pause length="4"/><Hangup/></Response>'
+                                    )
+                                    print("✅ Sent <Pause><Hangup/> TwiML.")
+                                else:
+                                    print(f"⚠️ Call ended. Status: {call.status}. Sending fallback hangup.")
+                                    twilio_client.calls(call_sid).update(status="completed")
+                                    print("✅ Fallback: Call marked as completed.")
+                            except Exception as e:
+                                print(f"❌ Exception while hanging up: {e}")
+                        else:
+                            print("❌ No call_sid found — skipping hang-up.")
+                        return  # ✅ Stop after hangup
 
                     current_response = ""
 
@@ -214,10 +206,22 @@ async def handle_media_stream(websocket: WebSocket):
                     except Exception as e:
                         print(f"❌ Error sending audio to Twilio: {e}")
 
+                # 🔍 Check final transcript for goodbye (after assistant reply)
+                if data.get("type") == "response.done":
+                    try:
+                        content_items = data.get("response", {}).get("output", [])[0].get("content", [])
+                        for item in content_items:
+                            if item.get("type") == "audio" and "transcript" in item:
+                                transcript = item["transcript"].lower()
+                                print(f"📝 Final transcript: {transcript}")
+                                if is_goodbye_trigger(transcript):
+                                    print("🚩 Goodbye intent detected. Will hang up after assistant finishes speaking.")
+                                    goodbye_detected = True  # 🚩 Set flag
+                    except Exception as e:
+                        print(f"⚠️ Error parsing transcript from response.done: {e}")
+
                 if data.get("type") in LOG_EVENT_TYPES:
                     print("📡 Event:", data["type"])
-
-        await asyncio.gather(recv_twilio(), send_twilio())
 
 # ─── Helper: session.update ───────────────────────────────────────────────────
 async def send_session_update(openai_ws):
