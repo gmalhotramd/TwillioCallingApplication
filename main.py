@@ -93,7 +93,6 @@ async def handle_media_stream(websocket: WebSocket):
     ) as openai_ws:
 
         await send_session_update(openai_ws)
-        
 
         async def recv_twilio():
             nonlocal stream_sid
@@ -101,7 +100,6 @@ async def handle_media_stream(websocket: WebSocket):
             last_audio_time = datetime.utcnow()
             prompt_sent = False
 
-            # ⏰ Background task: Watch for 3 seconds of silence
             async def silence_watchdog():
                 nonlocal prompt_sent
                 while not prompt_sent:
@@ -115,29 +113,22 @@ async def handle_media_stream(websocket: WebSocket):
                         }))
                         prompt_sent = True
 
-            # 🚀 Start silence checker
             asyncio.create_task(silence_watchdog())
 
-            # 🎧 Main loop: handle Twilio media events
             async for msg in websocket.iter_text():
                 data = json.loads(msg)
-
                 if data.get("event") == "start":
                     stream_sid = data['start']['streamSid']
-
                 elif data.get("event") == "media":
-                    last_audio_time = datetime.utcnow()  # 🔁 Reset timer on media
+                    last_audio_time = datetime.utcnow()
                     await openai_ws.send(json.dumps({
                         "type": "input_audio_buffer.append",
                         "audio": data['media']['payload']
                     }))
-
                 elif data.get("event") == "input_audio_buffer.speech_started":
-                    last_audio_time = datetime.utcnow()  # 🔁 Reset timer on speech start
+                    last_audio_time = datetime.utcnow()
 
-
-
-         async def send_twilio():
+        async def send_twilio():
             nonlocal full_text
 
             GOODBYE_TRIGGERS = [
@@ -156,7 +147,7 @@ async def handle_media_stream(websocket: WebSocket):
                 return any(trigger in normalized for trigger in GOODBYE_TRIGGERS)
 
             current_response = ""
-            goodbye_detected = False  # 🚩 New flag to delay hang-up
+            goodbye_detected = False
 
             while True:
                 raw = await openai_ws.recv()
@@ -170,7 +161,6 @@ async def handle_media_stream(websocket: WebSocket):
 
                 elif data.get("type") == "response.done":
                     print("📘 Assistant finished speaking.")
-                    
                     if goodbye_detected:
                         print("🛑 Goodbye was flagged earlier. Hanging up now.")
                         if call_sid:
@@ -190,7 +180,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 print(f"❌ Exception while hanging up: {e}")
                         else:
                             print("❌ No call_sid found — skipping hang-up.")
-                        return  # ✅ Stop after hangup
+                        return
 
                     current_response = ""
 
@@ -206,7 +196,6 @@ async def handle_media_stream(websocket: WebSocket):
                     except Exception as e:
                         print(f"❌ Error sending audio to Twilio: {e}")
 
-                # 🔍 Check final transcript for goodbye (after assistant reply)
                 if data.get("type") == "response.done":
                     try:
                         content_items = data.get("response", {}).get("output", [])[0].get("content", [])
@@ -216,28 +205,15 @@ async def handle_media_stream(websocket: WebSocket):
                                 print(f"📝 Final transcript: {transcript}")
                                 if is_goodbye_trigger(transcript):
                                     print("🚩 Goodbye intent detected. Will hang up after assistant finishes speaking.")
-                                    goodbye_detected = True  # 🚩 Set flag
+                                    goodbye_detected = True
                     except Exception as e:
                         print(f"⚠️ Error parsing transcript from response.done: {e}")
 
                 if data.get("type") in LOG_EVENT_TYPES:
                     print("📡 Event:", data["type"])
 
-# ─── Helper: session.update ───────────────────────────────────────────────────
-async def send_session_update(openai_ws):
-    session_update = {
-        "type": "session.update",
-        "session": {
-            "turn_detection": {"type": "server_vad"},
-            "input_audio_format": "g711_ulaw",
-            "output_audio_format": "g711_ulaw",
-            "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE,
-            "modalities": ["audio", "text"],
-            "temperature": 0.8
-        }
-    }
-    await openai_ws.send(json.dumps(session_update))
+        await asyncio.gather(recv_twilio(), send_twilio())
+
 
 # ─── Server entrypoint ────────────────────────────────────────────────────────
 if __name__ == "__main__":
