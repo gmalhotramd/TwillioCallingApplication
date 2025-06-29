@@ -6,6 +6,8 @@ from twilio.rest import Client
 from dotenv import load_dotenv
 from urllib.parse import parse_qs
 from datetime import datetime
+from fastapi import Query
+import httpx
 
 print(f"🔍 Websockets version in use: {websockets.__version__}")
 
@@ -203,6 +205,29 @@ async def send_session_update(openai_ws):
         }
     }
     await openai_ws.send(json.dumps(session_update))
+
+@app.get("/oauth/callback")
+async def oauth_callback(code: str = Query(...), state: str = Query(None)):
+    print(f"🔐 Received authorization code: {code}")
+    
+    token_url = "https://oauthserver.eclinicalworks.com/oauth/oauth2/token"
+    client_id = os.getenv("HEALOW_CLIENT_ID")
+    client_secret = os.getenv("HEALOW_CLIENT_SECRET")
+    redirect_uri = "https://twilliocallingapplication.onrender.com/oauth/callback"
+    
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "client_id": client_id,
+        "client_secret": client_secret
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(token_url, data=data)
+        print(f"🎟️ Token Response: {response.status_code}")
+        print(f"📦 Response JSON: {response.text}")
+        return response.json()
 
 if __name__ == "__main__":
     import uvicorn
