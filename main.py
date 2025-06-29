@@ -62,7 +62,7 @@ async def handle_incoming_call(request: Request):
     print(f"📦 Cached call_sid: {call_sid}")
 
     response = VoiceResponse()
-    response.say("Connecting you now to Eve AI from Absolute Health Care.")
+    response.say("Thank you for calling Absolute Healthcare - How may I help you?.")
     connect = Connect()
     connect.stream(url=f"wss://twilliocallingapplication.onrender.com/media-stream?callSid={call_sid}")
     response.append(connect)
