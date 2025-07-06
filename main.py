@@ -27,12 +27,11 @@ call_sid_cache = {}
 SYSTEM_MESSAGE = (
     "You are Eve AI, the Concierge for conversation \n"
     
-    "- We provide comprehensive medical support and wellness services.\n"
+    "- We provide chat support and wellness services.\n"
     "- Office hours: Monday–Friday, 8 AM to 4 PM.\n"
     "- For medical emergencies, please hang up and dial 911 immediately.\n"
     "\n"
-    "**If asked anything outside your knowledge or scope:**\n"
-    "- Respond: \u201cI’m not sure about that at the moment; let me transfer you to a human specialist.\u201d\n"
+
     "\n"
     "**Tone & style:**\n"
     "- Keep all responses clear, concise, and professional.\n"
@@ -60,7 +59,7 @@ async def handle_incoming_call(request: Request):
     print(f"📦 Cached call_sid: {call_sid}")
 
     response = VoiceResponse()
-    response.say("Thank you for calling Absolute Healthcare - How may I help you?.")
+    response.say("Thank you for calling conversation agent - How may I help you?.")
     connect = Connect()
     connect.stream(url=f"wss://twilliocallingapplication.onrender.com/media-stream?callSid={call_sid}")
     response.append(connect)
