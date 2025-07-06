@@ -8,7 +8,7 @@ from urllib.parse import parse_qs
 from datetime import datetime
 from fastapi import Query
 import httpx
-
+#Just for testing
 print(f"🔍 Websockets version in use: {websockets.__version__}")
 
 # Load configuration
