@@ -122,8 +122,8 @@ async def handle_media_stream(websocket: WebSocket):
             GOODBYE_TRIGGERS = [
                 "thank you bye have a great day", "thank you and goodbye",
                 "goodbye have a nice day", "thank you have a great day",
-                "have a great day", "talk to you later", "take care", "goodbye"
-            ]
+                "have a great day", "talk to you later", "take care", "goodbye", "adios", "ciao", "hasta luego", "bye now", "bye bye", "bye for now", "talk to you later"
+            ] 
 
             def is_goodbye_trigger(text):
                 return any(trigger in text.lower().strip() for trigger in GOODBYE_TRIGGERS)
