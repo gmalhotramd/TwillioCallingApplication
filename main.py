@@ -8,10 +8,9 @@ from urllib.parse import parse_qs
 from datetime import datetime
 from fastapi import Query
 import httpx
-#Just for testing
+
 print(f"🔍 Websockets version in use: {websockets.__version__}")
 
-# Load configuration
 load_dotenv()
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 TWILIO_SID = os.getenv('TWILIO_ACCOUNT_SID')
@@ -35,7 +34,6 @@ SYSTEM_MESSAGE = (
     "- Office hours: Monday–Friday, 8 AM to 4 PM.\n"
     "- For medical emergencies, please hang up and dial 911 immediately.\n"
     "\n"
-
     "\n"
     "**Tone & style:**\n"
     "- Keep all responses clear, concise, and professional.\n"
@@ -63,7 +61,6 @@ async def handle_incoming_call(request: Request):
     print(f"📦 Cached call_sid: {call_sid}")
 
     response = VoiceResponse()
-    response.say("Thank you for calling conversation agent - How may I help you?.")
     connect = Connect()
     connect.stream(url=f"wss://twilliocallingapplication.onrender.com/media-stream?callSid={call_sid}")
     response.append(connect)
@@ -127,13 +124,20 @@ async def handle_media_stream(websocket: WebSocket):
                 "thank you bye have a great day", "thank you and goodbye",
                 "goodbye have a nice day", "thank you have a great day",
                 "have a great day", "talk to you later", "take care", "goodbye", "adios", "ciao", "hasta luego", "bye now", "bye bye", "bye for now", "talk to you later"
-            ] 
+            ]
 
             def is_goodbye_trigger(text):
                 return any(trigger in text.lower().strip() for trigger in GOODBYE_TRIGGERS)
 
             current_response = ""
             goodbye_detected = False
+
+            # ✅ Initial GPT welcome prompt
+            await asyncio.sleep(0.5)
+            await openai_ws.send(json.dumps({
+                "type": "input_text",
+                "text": "Hi there! I'm Eve, your AI concierge. How can I help you today?"
+            }))
 
             while True:
                 data = json.loads(await openai_ws.recv())
@@ -210,12 +214,12 @@ async def send_session_update(openai_ws):
 @app.get("/oauth/callback")
 async def oauth_callback(code: str = Query(...), state: str = Query(None)):
     print(f"🔐 Received authorization code: {code}")
-    
+
     token_url = "https://oauthserver.eclinicalworks.com/oauth/oauth2/token"
     client_id = os.getenv("HEALOW_CLIENT_ID")
     client_secret = os.getenv("HEALOW_CLIENT_SECRET")
     redirect_uri = "https://twilliocallingapplication.onrender.com/oauth/callback"
-    
+
     data = {
         "grant_type": "authorization_code",
         "code": code,
